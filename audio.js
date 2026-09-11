@@ -1,0 +1,29 @@
+'use strict';
+// Put optional MP3 files in audio/, or select them through the audio settings.
+const GameAudio=(()=>{
+ const defs=[['op','OP / タイトル','bgm'],['stage','ステージプレイ中','bgm'],['boss','ボス戦','bgm'],['ninja','NINJA / 無敵中','bgm'],['power_twin','パワーアップ：ツインダスモ','se'],['power_spear','パワーアップ：スピア','se'],['power_golden','パワーアップ：ゴールデンボール','se'],['power_ninja','パワーアップ：NINJA','se'],['power_grass','パワーアップ：草','se'],['attack','ぺいの攻撃','se'],['enemy_hit','敵に攻撃が命中','se'],['player_hit','ぺいの被弾','se'],['enemy_down','敵を倒した時','se'],['boss_laser','ボスのレーザー','se'],['boss_down','ボスを倒した時','se'],['player_down','ぺいがやられた時・落下ミス','se'],['game_over','ゲームオーバー','se']];
+ const sources={},missing=new Set(),active=new Set(),fileNames={},rows={};let current=null,currentKey='',bgmVolume=.45,seVolume=.65,dbPromise=null,ready=false;
+ function db(){return dbPromise??=new Promise((resolve,reject)=>{if(!window.indexedDB){reject(new Error('保存非対応'));return}let r=indexedDB.open('pei-audio-v1',1);r.onupgradeneeded=()=>r.result.createObjectStore('tracks');r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)})}
+ async function persist(key,value){try{let d=await db();await new Promise((resolve,reject)=>{let tx=d.transaction('tracks','readwrite');if(value)tx.objectStore('tracks').put(value,key);else tx.objectStore('tracks').delete(key);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error)});return true}catch{return false}}
+ function source(key){return sources[key]||'audio/'+key+'.mp3'}
+ function play(a){a.play().catch(()=>{})}
+ function stopMusic(){if(current){current.pause();current=null}currentKey=''}
+ function sync(){if(!ready)return;if(document.getElementById('audioDialog').open){if(current)current.pause();return}let target=state==='title'?'op':state==='play'&&!p.dead&&boss.hp>0?(p.ninja>0?'ninja':bossStarted?'boss':'stage'):'';
+ if(!sound){if(current)current.pause();for(let a of active)a.pause();return}
+ if(state==='paused'){if(current)current.pause();return}
+ if(!target){stopMusic();return}if(currentKey!==target){stopMusic();if(missing.has(target))return;currentKey=target;current=new Audio(source(target));current.loop=true;current.volume=bgmVolume;let own=current;current.onerror=()=>{missing.add(target);if(current===own)stopMusic()};play(current)}else if(current&&current.paused)play(current)
+ }
+ function effect(key){if(!ready||!sound||missing.has(key))return false;let a=new Audio(source(key));a.volume=seVolume;active.add(a);let clean=()=>active.delete(a);a.onended=clean;a.onerror=()=>{missing.add(key);clean()};if(active.size>20){let oldest=active.values().next().value;oldest.pause();active.delete(oldest)}play(a);return true}
+ function setSource(key,file){if(sources[key])URL.revokeObjectURL(sources[key]);sources[key]=URL.createObjectURL(file);fileNames[key]=file.name;missing.delete(key);if(currentKey===key)stopMusic();renderRow(key);sync()}
+ function renderRow(key){if(rows[key])rows[key].querySelector('.audio-file-name').textContent=fileNames[key]||'audio/'+key+'.mp3（任意）'}
+ async function select(key,file){if(!file)return;if(!/\.mp3$/i.test(file.name)){status('MP3ファイルを選んでください。');return}try{await new Promise((resolve,reject)=>{let a=new Audio(),url=URL.createObjectURL(file);let done=ok=>{a.removeAttribute('src');URL.revokeObjectURL(url);ok?resolve():reject(new Error('読み込み不可'))};a.onloadedmetadata=()=>done(true);a.onerror=()=>done(false);a.src=url});setSource(key,file);let saved=await persist(key,file);status(saved?'音声を登録しました。このブラウザに保存されています。':'音声を登録しました。保存できない環境のため、次回は再選択してください。')}catch{status('このMP3を読み込めませんでした。別のファイルをお試しください。')}}
+ function status(s){document.getElementById('audioStatus').textContent=s}
+ function initUI(){const list=document.getElementById('audioRows');for(let [key,label,kind] of defs){let row=document.createElement('div');row.className='audio-row';row.innerHTML=`<div><small>${kind.toUpperCase()}</small><b>${label}</b><span class="audio-file-name"></span></div><label class="pick-audio">MP3を選択<input type="file" accept=".mp3,audio/mpeg" aria-label="${label}のMP3"></label><button type="button" data-preview>試聴</button><button type="button" data-clear aria-label="${label}の登録を解除">解除</button>`;list.append(row);rows[key]=row;renderRow(key);row.querySelector('input').onchange=e=>select(key,e.target.files[0]);row.querySelector('[data-preview]').onclick=()=>{stopPreview();let a=new Audio(source(key));a.volume=kind==='bgm'?bgmVolume:seVolume;preview=a;a.onerror=()=>status('音声が未設定、または読み込めません。MP3を選択してください。');a.play().catch(()=>status('試聴できませんでした。MP3ファイルを確認してください。'))};row.querySelector('[data-clear]').onclick=async()=>{stopPreview();if(currentKey===key)stopMusic();if(sources[key])URL.revokeObjectURL(sources[key]);delete sources[key];delete fileNames[key];missing.delete(key);await persist(key,null);renderRow(key);status('選択ファイルの登録を解除しました。audioフォルダーに同名MP3があれば使用します。')}}
+ document.getElementById('audioSettings').onclick=()=>{if(state==='play')pause();if(current)current.pause();document.getElementById('audioDialog').showModal()};document.getElementById('closeAudio').onclick=()=>document.getElementById('audioDialog').close();document.getElementById('audioDialog').addEventListener('close',()=>{stopPreview();sync()});document.getElementById('stopPreview').onclick=stopPreview;
+ for(let type of ['bgm','se'])document.getElementById(type+'Volume').oninput=e=>{let v=+e.target.value/100;document.getElementById(type+'Value').textContent=e.target.value+'%';if(type==='bgm'){bgmVolume=v;if(current)current.volume=v}else seVolume=v};
+ db().then(d=>{let tx=d.transaction('tracks','readonly'),r=tx.objectStore('tracks').openCursor();r.onsuccess=()=>{let c=r.result;if(c){if(defs.some(d=>d[0]===c.key))setSource(c.key,c.value);c.continue()}}}).catch(()=>status('この環境ではMP3の登録は今回の起動中のみ有効です。'));
+ ready=true;
+ }
+ let preview=null;function stopPreview(){if(preview){preview.pause();preview=null}}
+ return {sync,effect,initUI};
+})();
